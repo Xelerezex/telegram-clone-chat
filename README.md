@@ -116,13 +116,13 @@
 	-  _Messages_per_day_ = **18,000,000** 
 	- _Bytes_per_day_ = 18,000,000 * 1024 = **18,432,000,000 байт/день**
 	- _GiB_per_day_ = Bytes_per_day / (1024 \* 1024 \* 1024) = 18,432,000,000 / 1,073,741,824 = **17.166 GiB/day** 
-	- _MiB_per_sec_average_ = $\frac{Bytes\_per\_day}{86400 \cdot 1024 \cdot 1024}$ = **~0.203 MiB/s**
+	- _MiB_per_sec_average_ = $\frac{BytesPerDay}{86400 \cdot 1024 \cdot 1024}$ = **~0.203 MiB/s**
 	- _MiB_per_sec_peak_ = 0.203 \* 10 = **~2.03 MiB/s**
 - _Исходящий (WebSocket):_ 
 	- _Deliveries_per_day_ ​= 18,000,000 \* 20 = **360,000,000**
 	- _Bytes_per_day_ = 360,000,000 \* 1024 = **368,640,000,000 B/day**  
 	- _GiB_per_day_ = **~343.32 GB/day**. 
-	- _MiB_per_sec_average_ = $\frac{Bytes\_per\_day}{86400 \cdot 1024 \cdot 1024}$ = **~4.07 MiB/s**
+	- _MiB_per_sec_average_ = $\frac{BytesPerDay}{86400 \cdot 1024 \cdot 1024}$ = **~4.07 MiB/s**
 	- _MiB_per_sec_peak_ = 4.07 \* 10 = **~40.69 MiB/s**
 
 | Endpoint      |    _Ивенты_ |   _Байт в день_ | _Гигабайт в день_ | _Мегабайт в секунду среднее_ | _Мегабайт в секунду пик_ |
