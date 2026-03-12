@@ -374,7 +374,7 @@ MSG --> DB
 | `users`          | `id`, `username`, `phone_number`   | В целом равномерное.                                 | Редкие всплески по популярным аккаунтам.                             |
 | `user_sessions`  | `user_id`, `token`                 | User-centric.                                        | Пользователи с несколькими устройствами и частыми переподключениями. |
 | `chats`          | `id`                               | Chat-centric.                                        | Крупные группы и каналы становятся hot key.                          |
-| `chat_members`   | `(chat_id, user_id)`               | Смешанное: chat-centric и user-centric.              | Большие каналы вызывают всплески обновлений по многим участникам.    |
+| `chat_members`   | `chat_id, user_id`                 | Смешанное: chat-centric и user-centric.              | Большие каналы вызывают всплески обновлений по многим участникам.    |
 | `messages`       | `chat_id, seq_no`                  | Chat-centric.                                        | Самые активные чаты концентрируют запись.                            |
 | `update_buffer`  | `user_id`                          | После fanout нагрузка раскладывается по получателям. | Массовые каналы создают широкие всплески по многим `user_id`.        |
 | `presence_cache` | `user_id, device_id`               | User-centric.                                        | Активные multi-device пользователи.                                  |
