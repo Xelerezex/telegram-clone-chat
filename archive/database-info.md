@@ -1,32 +1,62 @@
 
 ---
-## Покрытие типов данных
-
-|Класс данных|Есть в MVP|Где хранится|
-|---|--:|---|
-|Постоянные пользовательские данные|Да|`users`|
-|Данные авторизации и устройств|Да|`user_sessions`|
-|Метаданные чатов|Да|`chats`|
-|Состав участников чатов|Да|`chat_members`|
-|История текстовых сообщений|Да|`messages`|
-|Буферы доставки и синхронизации|Да|`update_buffer`|
-|Кеш онлайн-статуса|Да|`presence_cache`|
-|Журнал событий|Да|`event_log`|
-|Файловые данные|Нет|В рамках данного MVP не используются и не проектируются|
-
-## Полное описание таблиц
-
-|Таблица|Назначение|Что хранится|Где именно хранятся данные|Особенности|
-|---|---|---|---|---|
-|`users`|Профиль пользователя|`id`, `username`, `phone_number`, `display_name`, `bio`, `created_at`, `updated_at`|Основное транзакционное хранилище|Постоянные данные учетной записи|
-|`user_sessions`|Авторизация и активные устройства|`token`, `user_id`, `device_id`, `user_agent`, `ip_address`, `created_at`, `expires_at`|Быстрое session/key-value хранилище с TTL|Одна учетная запись может иметь несколько активных устройств|
-|`chats`|Метаданные диалогов, групп и каналов|`id`, `type`, `title`, `owner_id`, `last_message_id`, `is_secret`, `created_at`, `updated_at`|Основное транзакционное хранилище|`type` различает private/group/channel; `is_secret` отмечает секретные чаты|
-|`chat_members`|Участники чатов и их состояние|`chat_id`, `user_id`, `role`, `last_read_seq_no`, `unread_count`, `joined_at`, `updated_at`|Основное транзакционное хранилище|Хранит ACL и пользовательское состояние в чате|
-|`messages`|История текстовых сообщений|`id`, `chat_id`, `sender_id`, `seq_no`, `body`, `is_edited`, `is_encrypted`, `created_at`, `updated_at`|Основное транзакционное хранилище|Для secret chats сервер хранит ciphertext, а `is_encrypted = true`|
-|`update_buffer`|Буфер обновлений для доставки и синхронизации|`id`, `user_id`, `chat_id`, `message_id`, `update_type`, `payload`, `created_at`, `expires_at`|TTL-буфер|Используется для `getUpdates`/reconnect/sync|
-|`presence_cache`|Онлайн-статус и last seen|`user_id`, `device_id`, `status`, `last_seen_at`, `expires_at`|In-memory cache с TTL|Нужен для realtime-логики|
-|`event_log`|Журнал системных и пользовательских событий|`id`, `user_id`, `chat_id`, `message_id`, `event_type`, `payload`, `created_at`|Append-only событийное хранилище|Используется для аудита и аналитики|
 
 - **plaintext** — исходное обычное сообщение, которое можно прочитать 
 - **ciphertext** — результат шифрования, набор данных, который без ключа не читается
 - **QPS** — это **Queries Per Second**, то есть **количество запросов в секунду**.
+
+---
+
+## Логика работы с сообщениями, fan-out и синхронизацией клиента
+
+### Описание fan-out алгоритма
+
+|Сценарий|Как работает сервер|Какие таблицы участвуют|
+|---|---|---|
+|Личный Cloud Chat.|После записи сообщения сервер создает пользовательские изменения для получателей.|`messages`, `user_updates`, `chat_members`.|
+|Обычная группа Cloud Chat.|После записи сообщения сервер создает пользовательские изменения для участников группы.|`messages`, `user_updates`, `chat_members`.|
+|Канал или очень большая группа Cloud Chat.|Сервер сохраняет сообщение в истории чата. Клиент получает дельту изменений и затем дочитывает полные сообщения из истории.|`messages`, `user_updates`, `device_sync_state`.|
+|Secret Chat.|Сервер не хранит историю secret messages в облачной БД. Он участвует только в установке Secret Chat и передаче служебного состояния. История Secret Chats не входит в cloud-синхронизацию.|`secret_chats`. ([Telegram](https://core.telegram.org/api/end-to-end?utm_source=chatgpt.com "End-to-End Encryption, Secret Chats"))|
+
+### Как клиент получает новые сообщения
+
+|Шаг|Действие клиента или сервера|Какие таблицы участвуют|
+|---|---|---|
+|1|Клиент хранит локальный набор сообщений Cloud Chats и локальный курсор синхронизации.|Локальное хранилище устройства. На сервере аналог курсора отражается в `device_sync_state`.|
+|2|При появлении новых событий сервер формирует поток пользовательских изменений.|`user_updates`.|
+|3|Клиент получает список изменений после своего последнего курсора.|`user_updates`, `device_sync_state`.|
+|4|По списку изменений клиент дочитывает полные сообщения.|`messages`.|
+|5|После применения дельты сервер обновляет курсор устройства.|`device_sync_state`.|
+|6|Для Secret Chats новый device не получает историю из облака. Secret Chat остается только на устройствах, между которыми он был создан.|`secret_chats`. ([Telegram](https://core.telegram.org/api/end-to-end?utm_source=chatgpt.com "End-to-End Encryption, Secret Chats"))|
+
+### Как работает онлайн-сценарий
+
+|Шаг|Что происходит|
+|---|---|
+|1|Клиент отправляет сообщение в Cloud Chat.|
+|2|Сервер проверяет членство и право записи в чат.|
+|3|Сервер создает запись в `messages`.|
+|4|Сервер создает новые записи в `user_updates` для получателей.|
+|5|Получающие клиенты читают поток изменений и затем дочитывают сообщение из `messages`.|
+|6|Для Secret Chats серверная облачная история не создается. Secret Chat остается вне cloud-sync модели. ([Telegram](https://core.telegram.org/techfaq?utm_source=chatgpt.com "FAQ for the Technically Inclined"))|
+
+### Как работает оффлайн-сценарий
+
+|Шаг|Что происходит|
+|---|---|
+|1|Устройство reconnect-ится после offline-периода.|
+|2|Клиент отправляет свой последний сохраненный курсор синхронизации Cloud Chats.|
+|3|Сервер находит все изменения после этого курсора.|
+|4|Клиент получает дельту по таблице `user_updates`.|
+|5|Клиент дочитывает сообщения из `messages`.|
+|6|После успешного применения дельты сервер обновляет `device_sync_state`.|
+|7|История Secret Chats на новом устройстве не докачивается, потому что Secret Chats не входят в Telegram cloud. ([Telegram](https://core.telegram.org/method/updates.getDifference?utm_source=chatgpt.com "updates.getDifference"))|
+
+### Логический аналог клиентской модели Telegram
+
+| Идея клиентской синхронизации.                                       | Логический аналог в проекте.                                                                                                        |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Клиент хранит локальное состояние обновлений Cloud Chats.            | `device_sync_state`.                                                                                                                |
+| Сервер отдает difference после reconnect или gap.                    | `user_updates`.                                                                                                                     |
+| Полные данные Cloud Chats хранятся отдельно от состояния обновлений. | `messages`.                                                                                                                         |
+| Secret Chats device-specific и не являются частью cloud history.     | `secret_chats`. ([Telegram](https://core.telegram.org/method/updates.getDifference?utm_source=chatgpt.com "updates.getDifference")) |
