@@ -3,8 +3,18 @@
 Project telegram_clone_mvp {
   database_type: "PostgreSQL"
   Note: '''
-  Схема БД для MVP мессенджера.
+  Логическая схема БД для MVP мессенджера.
+  Cloud Chats используют client-server encryption.
+  Secret Chats используют end-to-end encryption и не входят в cloud history.
   '''
+}
+
+Table chat_types {
+  id integer [pk, not null]
+  code varchar(32) [not null, unique]
+  name varchar(64) [not null]
+
+  Note: 'Справочник типов чатов'
 }
 
 Table users {
@@ -33,7 +43,7 @@ Table user_sessions {
   created_at timestamp [not null]
   expires_at timestamp [not null]
 
-  Note: 'Активные сессии пользователей'
+  Note: 'Активные пользовательские сессии'
 
   Indexes {
     user_id [name: 'idx_user_sessions_user_id']
@@ -43,18 +53,16 @@ Table user_sessions {
 
 Table chats {
   id uuid [pk, not null]
-  type varchar(32) [not null, note: 'private | group | channel']
+  chat_type_id integer [not null]
   title varchar(255) [not null]
-  owner_id uuid [not null]
   last_message_id uuid
-  is_secret boolean [not null, default: false]
   created_at timestamp [not null]
   updated_at timestamp [not null]
 
   Note: 'Чаты, группы и каналы'
 
   Indexes {
-    owner_id [name: 'idx_chats_owner_id']
+    chat_type_id [name: 'idx_chats_chat_type_id']
     updated_at [name: 'idx_chats_updated_at']
   }
 }
@@ -68,7 +76,7 @@ Table chat_members {
   joined_at timestamp [not null]
   updated_at timestamp [not null]
 
-  Note: 'Участники чатов и состояние пользователя внутри чата'
+  Note: 'Участники чатов и пользовательское состояние'
 
   Indexes {
     (chat_id, user_id) [pk]
@@ -83,12 +91,10 @@ Table messages {
   sender_id uuid [not null]
   seq_no bigint [not null]
   body text [not null]
-  is_edited boolean [not null, default: false]
-  is_encrypted boolean [not null, default: false]
   created_at timestamp [not null]
-  updated_at timestamp [not null]
+  edited_at timestamp
 
-  Note: 'Сообщения чатов'
+  Note: 'История сообщений Cloud Chats'
 
   Indexes {
     (chat_id, seq_no) [name: 'uq_messages_chat_seq', unique]
@@ -97,63 +103,73 @@ Table messages {
   }
 }
 
-Table update_buffer {
+Table secret_chats {
+  id uuid [pk, not null]
+  initiator_user_id uuid [not null]
+  initiator_device_id varchar(128) [not null]
+  peer_user_id uuid [not null]
+  peer_device_id varchar(128) [not null]
+  key_fingerprint varchar(128) [not null]
+  ttl_seconds integer
+  created_at timestamp [not null]
+
+  Note: 'Метаданные Secret Chats. Device-specific и вне cloud history.'
+
+  Indexes {
+    initiator_user_id [name: 'idx_secret_chats_initiator_user_id']
+    peer_user_id [name: 'idx_secret_chats_peer_user_id']
+  }
+}
+
+Table user_updates {
   id uuid [pk, not null]
   user_id uuid [not null]
   chat_id uuid [not null]
   message_id uuid [not null]
-  update_type varchar(64) [not null, note: 'new_message | read_ack | edit_message | service_event']
-  payload text [not null]
+  update_seq_no bigint [not null]
+  update_kind varchar(32) [not null, note: 'new_message | edit_message | delete_message | read_state']
   created_at timestamp [not null]
-  expires_at timestamp [not null]
 
-  Note: 'Буфер обновлений для доставки и синхронизации'
+  Note: 'Поток пользовательских изменений только для Cloud Chats'
 
   Indexes {
-    user_id [name: 'idx_update_buffer_user_id']
-    chat_id [name: 'idx_update_buffer_chat_id']
-    message_id [name: 'idx_update_buffer_message_id']
-    expires_at [name: 'idx_update_buffer_expires_at']
+    user_id [name: 'idx_user_updates_user_id']
+    chat_id [name: 'idx_user_updates_chat_id']
+    message_id [name: 'idx_user_updates_message_id']
+    (user_id, update_seq_no) [name: 'uq_user_updates_user_seq', unique]
   }
 }
 
-Table presence_cache {
+Table device_sync_state {
+  user_id uuid [not null]
+  device_id varchar(128) [not null]
+  last_update_seq_no bigint [not null, default: 0]
+  last_sync_at timestamp [not null]
+
+  Note: 'Состояние синхронизации устройства'
+
+  Indexes {
+    (user_id, device_id) [pk]
+  }
+}
+
+Table user_presence {
   user_id uuid [not null]
   device_id varchar(128) [not null]
   status varchar(32) [not null, note: 'online | offline | away']
   last_seen_at timestamp [not null]
-  expires_at timestamp [not null]
+  updated_at timestamp [not null]
 
-  Note: 'Онлайн-статус пользователя и last_seen'
+  Note: 'Состояние присутствия пользователя'
 
   Indexes {
     (user_id, device_id) [pk]
-    expires_at [name: 'idx_presence_cache_expires_at']
-  }
-}
-
-Table event_log {
-  id uuid [pk, not null]
-  user_id uuid [not null]
-  chat_id uuid
-  message_id uuid
-  event_type varchar(64) [not null, note: 'send_message | read_message | login | reconnect | join_chat']
-  payload text [not null]
-  created_at timestamp [not null]
-
-  Note: 'Журнал событий системы'
-
-  Indexes {
-    user_id [name: 'idx_event_log_user_id']
-    chat_id [name: 'idx_event_log_chat_id']
-    message_id [name: 'idx_event_log_message_id']
-    created_at [name: 'idx_event_log_created_at']
   }
 }
 
 Ref: user_sessions.user_id > users.id
 
-Ref: chats.owner_id > users.id
+Ref: chats.chat_type_id > chat_types.id
 Ref: chats.last_message_id > messages.id
 
 Ref: chat_members.chat_id > chats.id
@@ -162,14 +178,14 @@ Ref: chat_members.user_id > users.id
 Ref: messages.chat_id > chats.id
 Ref: messages.sender_id > users.id
 
-Ref: update_buffer.user_id > users.id
-Ref: update_buffer.chat_id > chats.id
-Ref: update_buffer.message_id > messages.id
+Ref: secret_chats.initiator_user_id > users.id
+Ref: secret_chats.peer_user_id > users.id
 
-Ref: presence_cache.user_id > users.id
+Ref: user_updates.user_id > users.id
+Ref: user_updates.chat_id > chats.id
+Ref: user_updates.message_id > messages.id
 
-Ref: event_log.user_id > users.id
-Ref: event_log.chat_id > chats.id
-Ref: event_log.message_id > messages.id
+Ref: device_sync_state.user_id > users.id
 
+Ref: user_presence.user_id > users.id
 ```
