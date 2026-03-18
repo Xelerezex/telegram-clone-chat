@@ -26,6 +26,7 @@
 |`POST /auth/validate`|`user_sessions`|$1$|$0$|$1$|
 |`GET /presence`|`user_presence`|$1$|$0$|$1$|
 
+---
 ### POST messages.send
 
 При одной отправке сообщения логически происходит следующее:
@@ -106,6 +107,8 @@ WHERE cm.chat_id = $1
   AND cm.user_id <> $2;
 COMMIT;
 ```
+
+---
 ### GET messages.history
 
 Если история отдается страницей по `LIMIT 50`, то:
@@ -128,6 +131,7 @@ ORDER BY seq_no DESC
 LIMIT 50;
 ```
 
+---
 ### GET updates
 
 Обычно здесь, при $L_{updates} = 100$:
@@ -158,6 +162,8 @@ AND update_seq_no > $3
 ORDER BY update_seq_no  
 LIMIT 100;
 ```
+
+---
 ### GET dialogs
 
 Если список диалогов строится через `chat_members JOIN chats` и $L_{dialogs}​=50$, то логически:
@@ -181,6 +187,8 @@ WHERE cm.user_id = $1
 ORDER BY c.updated_at DESC
 LIMIT 50;
 ```
+
+---
 ### POST auth.validate
 
 Здесь все просто:
@@ -197,6 +205,8 @@ FROM user_sessions
 WHERE token = $1
   AND expires_at > now();
 ```
+
+---
 ### GET presence
 
 Если смотреть логически по таблице `user_presence`, то:
@@ -213,3 +223,4 @@ FROM user_presence
 WHERE user_id = $1
   AND device_id = $2;
 ```
+
