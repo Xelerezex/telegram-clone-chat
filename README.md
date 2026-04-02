@@ -478,6 +478,7 @@ MSG --> DB
 |`GET /dialogs`|`dialogs_by_user`|Одним запросом по `user_id` читается top-N последних диалогов без scatter-gather|
 |`POST /auth/validate`|`user_sessions`|Проверяется токен и срок жизни сессии|
 |`GET /presence`|`user_presence`|Читается online/offline состояние пользователя или устройства|
+
 Количество строк, которые аффектятся при запросе или пример SQL-запросов можно посмотреть в [файле](archive/physical-database-info.md).
 
 ---
