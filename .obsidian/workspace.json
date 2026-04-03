@@ -228,12 +228,12 @@
   "active": "6372e62ea36c8440",
   "lastOpenFiles": [
     "archive/physical-database-info.md",
+    "archive/database-calculation.md",
     "README.md",
     "pictures/physical-database.svg",
     "pictures/physical-database_old.svg",
     "pictures/highload-physical-scheme.svg",
     "resources/database-sql.md",
-    "archive/database-calculation.md",
     "archive/database-info.md",
     "pictures/citus.png",
     "pictures/postgresql-database-logo.png",

@@ -415,19 +415,19 @@ MSG --> DB
 
 #### Выбор СУБД по таблицам
 
-| Физический объект   | Hot-path / проекция  | СУБД / хранилище | Где физически лежат данные    | Ключ шардирования / распределения | Причина выбора                                                                          |
-| ------------------- | -------------------- | ---------------- | ----------------------------- | --------------------------------- | --------------------------------------------------------------------------------------- |
-| `chat_types`        | Общий / вне hot-path | Citus            | NVMe SSD на worker-узлах      | Не шардируется, reference table   | Небольшой справочник, должен быть локально доступен рядом с chat-centric таблицами      |
-| `users`             | Общий / вне hot-path | PostgreSQL       | NVMe SSD на primary и replica | Не шардируется                    | Нужны strong consistency и глобальные unique-ограничения по `username` и `phone_number` |
-| `user_sessions`     | Общий / вне hot-path | PostgreSQL       | NVMe SSD на primary и replica | Не шардируется                    | Авторитетное хранилище токенов и сессий                                                 |
-| `secret_chats`      | Общий / вне hot-path | PostgreSQL       | NVMe SSD на primary и replica | Не шардируется                    | Небольшой объём, чувствительные метаданные, strong consistency                          |
-| `chats`             | Chat-centric         | Citus            | NVMe SSD на worker-узлах      | По `id` чата                      | Chat-centric метаданные, должны лежать рядом с историей этого же чата                   |
-| `chat_members`      | Chat-centric         | Citus            | NVMe SSD на worker-узлах      | По `chat_id`                      | Проверка членства, ролей и ACL выполняется в разрезе чата                               |
-| `messages`          | Chat-centric         | Citus            | NVMe SSD на worker-узлах      | По `chat_id`                      | Основная горячая таблица истории, должна масштабироваться по chat-centric нагрузке      |
-| `user_updates`      | User-centric         | Citus            | NVMe SSD на worker-узлах      | По `user_id`                      | Персональный append-only журнал обновлений пользователя                                 |
-| `device_sync_state` | User-centric         | Citus            | NVMe SSD на worker-узлах      | По `user_id`                      | Offset устройства всегда читается и пишется по пользователю                             |
-| `dialogs_by_user`   | User-centric         | Citus            | NVMe SSD на worker-узлах      | По `user_id`                      | Специальная физическая read-model проекция для быстрого `GET /dialogs`                  |
-| `user_presence`     | User-centric         | Redis Cluster    | RAM                           | По ключу `user_id/device_id`      | Эфемерное состояние online/offline, здесь важнее минимальная задержка                   |
+| Физический объект   | Hot-path / проекция  | СУБД / хранилище | Где физически лежат данные    | Ключ шардирования / распределения | Резервирование            | Причина выбора                                                                          |
+| ------------------- | -------------------- | ---------------- | ----------------------------- | --------------------------------- | ------------------------- | --------------------------------------------------------------------------------------- |
+| `chat_types`        | Общий / вне hot-path | Citus            | NVMe SSD на worker-узлах      | Не шардируется, reference table   | Репликация на worker-узлы | Небольшой справочник, должен быть локально доступен рядом с chat-centric таблицами      |
+| `users`             | Общий / вне hot-path | PostgreSQL       | NVMe SSD на primary и replica | Не шардируется                    | 1 primary + 2 hot standby | Нужны strong consistency и глобальные unique-ограничения по `username` и `phone_number` |
+| `user_sessions`     | Общий / вне hot-path | PostgreSQL       | NVMe SSD на primary и replica | Не шардируется                    | 1 primary + 2 hot standby | Авторитетное хранилище токенов и сессий                                                 |
+| `secret_chats`      | Общий / вне hot-path | PostgreSQL       | NVMe SSD на primary и replica | Не шардируется                    | 1 primary + 2 hot standby | Небольшой объём, чувствительные метаданные, strong consistency                          |
+| `chats`             | Chat-centric         | Citus            | NVMe SSD на worker-узлах      | По `id` чата                      | RF = 2                    | Chat-centric метаданные, должны лежать рядом с историей этого же чата                   |
+| `chat_members`      | Chat-centric         | Citus            | NVMe SSD на worker-узлах      | По `chat_id`                      | RF = 2                    | Проверка членства, ролей и ACL выполняется в разрезе чата                               |
+| `messages`          | Chat-centric         | Citus            | NVMe SSD на worker-узлах      | По `chat_id`                      | RF = 2                    | Основная горячая таблица истории, должна масштабироваться по chat-centric нагрузке      |
+| `user_updates`      | User-centric         | Citus            | NVMe SSD на worker-узлах      | По `user_id`                      | RF = 2                    | Персональный append-only журнал обновлений пользователя                                 |
+| `device_sync_state` | User-centric         | Citus            | NVMe SSD на worker-узлах      | По `user_id`                      | RF = 2                    | Offset устройства всегда читается и пишется по пользователю                             |
+| `dialogs_by_user`   | User-centric         | Citus            | NVMe SSD на worker-узлах      | По `user_id`                      | RF = 2                    | Специальная физическая read-model проекция для быстрого `GET /dialogs`                  |
+| `user_presence`     | User-centric         | Redis Cluster    | RAM                           | По ключу `user_id/device_id`      | 1 primary + 2 replicas    | Эфемерное состояние online/offline, здесь важнее минимальная задержка                   |
 
 #### Индексы
 | Физический объект | Индекс                             | Поля индекса                   | Тип            | Для каких запросов нужен                        |
