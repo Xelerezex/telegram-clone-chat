@@ -620,6 +620,29 @@ flowchart TD
 | Grafana k6 [^48] | Нагрузочное тестирование API и realtime-сценариев | Проект highload, значит без регулярного load testing стек неполный. k6 удобен для проверки send/history/updates-сценариев, оценки RPS, latency и поведения системы под пиковыми профилями нагрузки.                                  |
 
 ---
+### 9. Обеспечение надёжности
+
+#### Общие компоненты
+
+| Компонент                                             | Способ резервирования                                                                                  | Объяснение                                                                                                                                                                                                  | Источник                      |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Kubernetes-кластер                                    | Несколько worker-узлов, self-healing, `Deployment`, `readiness/liveness probes`, `PodDisruptionBudget` | При падении pod или узла Kubernetes пересоздаёт workload на другом узле, не подаёт трафик на неготовые экземпляры и ограничивает число одновременно недоступных pod-ов при плановых работах.                | [^55] [^56] [^57] [^58]       |
+| L4-балансировщик                                      | Облачный L4 LB провайдера + health checks backend-пула                                                 | Если один backend становится недоступен, балансировщик перестаёт отправлять на него трафик и перенаправляет запросы на оставшиеся живые узлы.                                                               | [^20] [^59]                   |
+| L7-балансировка (`nginx` / Ingress)                   | Схема `N+1`, минимум 3 экземпляра, readiness probes, rolling update                                    | Один L7-узел может выйти из строя без остановки сервиса: трафик продолжат обслуживать оставшиеся ingress-экземпляры. Обновления раскатываются поэтапно.                                                     | [^55] [^56] [^58] [^60] [^61] |
+| Web / API / Auth / Message / Updates сервисы          | Не менее 2 реплик каждого stateless-сервиса на разных worker-узлах                                     | Отказ одного экземпляра не приводит к остановке компонента: запросы уходят на оставшиеся реплики, а Kubernetes автоматически поднимает новую.                                                               | [^55] [^56] [^58]             |
+| Realtime / WebSocket сервис                           | Горизонтальное масштабирование + несколько реплик за L7/L4                                             | При падении одного realtime-узла теряется только часть активных соединений; клиенты переподключаются через балансировщик к живым репликам.                                                                  | [^41] [^42] [^56]             |
+| PostgreSQL (`users`, `user_sessions`, `secret_chats`) | `1 primary + 2 hot standby`, streaming replication, WAL archiving, base backup, PITR                   | Авторитетные strong-consistency данные дублируются на standby-узлы; при отказе primary возможен failover, а WAL + base backup дают восстановление на нужный момент времени.                                 | [^62] [^63] [^64]             |
+| Citus coordinator                                     | Hot standby через PostgreSQL streaming replication + резервная копия metadata                          | Координатор хранит metadata кластера; его отказ не должен быть single point of failure, поэтому coordinator резервируется как обычный PostgreSQL primary/standby-контур.                                    | [^65] [^66]                   |
+| Citus worker-узлы и distributed tables                | Репликация shard-ов (`RF = 2`) + standby для worker-узлов                                              | При отказе одного worker-а запросы могут обслуживаться replica shard-ами или standby-узлом; отказ изолируется на уровне shard placement, а не валит весь кластер.                                           | [^65] [^66]                   |
+| Citus reference tables (`chat_types`)                 | Репликация reference table на все worker-узлы + 2PC на запись                                          | Малые общие справочники лежат локально на каждом worker-е, поэтому чтение не зависит от сети между узлами, а изменения фиксируются согласованно.                                                            | [^67]                         |
+| Redis Cluster (`user_presence`)                       | Primary-replica, автоматическое повышение replica, кластерный failover, AOF/RDB persistence            | Presence хранится в быстром in-memory контуре, но кластер всё равно должен переживать отказ узла; реплики и автоматический failover уменьшают downtime, persistence ускоряет восстановление после рестарта. | [^68] [^69]                   |
+| Prometheus                                            | Два одинаковых Prometheus-инстанса                                                                     | При отказе одного инстанса второй продолжает scraping и сбор метрик; дублирующиеся алерты затем дедуплицируются через Alertmanager.                                                                         | [^70] [^71]                   |
+| Alertmanager                                          | Кластер из нескольких экземпляров                                                                      | Уведомления не завязаны на один узел: экземпляры образуют HA-кластер и дедуплицируют одинаковые алерты.                                                                                                     | [^71]                         |
+| Grafana                                               | Не менее 2 active-instance за балансировщиком + shared DB                                              | При отказе одной Grafana-поды UI мониторинга остаётся доступным; пользовательские сессии и alerting HA продолжают работать через оставшиеся узлы.                                                           | [^72]                         |
+| Loki                                                  | Разделение на read/write-компоненты + reverse proxy + внешнее хранилище логов                          | Логирование не держится на одном процессе: read и write можно масштабировать отдельно, а сами логи хранятся вне локального диска одного узла.                                                               | [^73] [^74]                   |
+| Jaeger                                                | Несколько collector/query экземпляров + внешнее storage, при необходимости buffer через Kafka          | Трейсинг-контур резервируется горизонтально; collector и query масштабируются независимо, а при высоких всплесках между collector и storage может стоять буфер, снижающий риск потери трейсов.              | [^75]                         |
+
+---
 ## Список источников
 
 [^1]: [Telegram Users Statistics 2026 (Latest Global Data)](https://www.demandsage.com/telegram-statistics/)
@@ -728,3 +751,45 @@ flowchart TD
 [^53]: [Jaeger. Documentation.](https://www.jaegertracing.io/docs/2.17/)
 
 [^54]: [Sentry. Docs.](https://docs.sentry.io/)
+
+[^55]: [Kubernetes Self-Healing](https://kubernetes.io/docs/concepts/architecture/self-healing/) 
+
+[^56]: [Liveness, Readiness, and Startup Probes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/) 
+
+[^57]: [Specifying a Disruption Budget for your Application](https://kubernetes.io/docs/tasks/run-application/configure-pdb/) 
+
+[^58]: [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/) 
+
+[^59]: [Load balancers | Selectel Documentation](https://docs.selectel.ru/en/cloud-servers/load-balancers/about-load-balancers/) 
+
+[^60]: [Run multiple NGINX Ingress Controllers](https://docs.nginx.com/nginx-ingress-controller/install/multiple-controllers/) 
+
+[^61]: [High Availability | NGINX Documentation](https://docs.nginx.com/nginx/admin-guide/high-availability/)
+
+[^62]: [PostgreSQL. High Availability, Load Balancing, and Replication](https://www.postgresql.org/docs/current/high-availability.html) 
+
+[^63]: [PostgreSQL. Replication](https://www.postgresql.org/docs/current/runtime-config-replication.html) 
+
+[^64]: [PostgreSQL. Continuous Archiving and Point-in-Time Recovery (PITR)](https://www.postgresql.org/docs/current/continuous-archiving.html) 
+
+[^65]:[Citus. Cluster Management](https://docs.citusdata.com/en/v11.0/admin_guide/cluster_management.html)
+
+[^66]:[Citus. FAQ](https://docs.citusdata.com/en/v6.2/faq/faq.html) 
+
+[^67]:[Citus. Concepts. Reference Tables](https://docs.citusdata.com/en/v7.4/get_started/concepts.html)
+
+[^68]:[Redis Cluster Specification](https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/) 
+
+[^69]:[Redis Persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/) 
+
+[^70]:[Prometheus FAQ](https://prometheus.io/docs/introduction/faq/) 
+
+[^71]:[Alertmanager High Availability](https://prometheus.io/docs/alerting/latest/high_availability/) 
+
+[^72]:[Set up Grafana for high availability](https://grafana.com/docs/grafana/latest/setup-grafana/set-up-for-high-availability/) 
+
+[^73]: [Grafana Loki](https://grafana.com/docs/loki/latest/) 
+
+[^74]:[Loki deployment modes](https://grafana.com/docs/loki/latest/get-started/deployment-modes/) 
+
+[^75]:[Jaeger Architecture](https://www.jaegertracing.io/docs/latest/architecture/)
